@@ -1,0 +1,247 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# ── Formatting ───────────────────────────────────────────────────────────────
+
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TFVARS="$SCRIPT_DIR/terraform/terraform.tfvars"
+ANSIBLE_VARS="$SCRIPT_DIR/ansible/vars.yml"
+
+# ── UI helpers ───────────────────────────────────────────────────────────────
+
+header() {
+  printf '\033[2J\033[H'
+  echo
+  echo -e "  ${BOLD}dev-machine${NC}  ${DIM}configurator${NC}"
+  echo -e "  ${DIM}──────────────────────────────────────${NC}"
+  echo
+}
+
+step() { echo -e "\n  ${BOLD}${CYAN}$*${NC}"; }
+ok()   { echo -e "  ${GREEN}✓${NC}  $*"; }
+warn() { echo -e "  ${YELLOW}!${NC}  $*"; }
+info() { echo -e "  ${DIM}$*${NC}"; }
+
+# Prompts user with an optional default shown in dim brackets.
+# Result is stored in $ANSWER.
+ANSWER=""
+ask() {
+  local label="$1" default="${2:-}"
+  echo -ne "\n  ${BOLD}${label}${NC}"
+  [[ -n "$default" ]] && echo -ne " ${DIM}[${default}]${NC}"
+  echo -ne " › "
+  read -r ANSWER || true
+  ANSWER="${ANSWER:-$default}"
+}
+
+# Displays a numbered menu and stores the 0-based index in $CHOICE.
+CHOICE=0
+choose() {
+  local label="$1"; shift
+  local opts=("$@")
+  echo -e "\n  ${BOLD}${label}${NC}"
+  for i in "${!opts[@]}"; do
+    printf "    ${DIM}%d.${NC} %s\n" $((i + 1)) "${opts[$i]}"
+  done
+  local answer
+  while true; do
+    echo -ne "\n  › "
+    read -r answer || true
+    if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#opts[@]} )); then
+      CHOICE=$((answer - 1))
+      return
+    fi
+    echo -e "  ${RED}Please enter a number between 1 and ${#opts[@]}${NC}"
+  done
+}
+
+# ── Defaults ─────────────────────────────────────────────────────────────────
+
+D_REGION="us-east-1"
+D_KEY="~/.ssh/dev-machine-key.pub"
+D_TYPE="t3.medium"
+D_SIZE="20"
+D_IP=""
+D_GIT_NAME=""
+D_GIT_EMAIL=""
+
+# Extracts a value from an HCL tfvars file by key name.
+tfvar() {
+  local key="$1"
+  grep -E "^${key}\s*=" "$TFVARS" 2>/dev/null \
+    | sed -E 's/^[^=]+=\s*"?([^"#]*)"?.*/\1/' \
+    | tr -d ' ' \
+    || true
+}
+
+# Extracts a value from a YAML vars file by key name.
+ansiblevar() {
+  local key="$1"
+  grep -E "^${key}:" "$ANSIBLE_VARS" 2>/dev/null \
+    | sed -E 's/^[^:]+:\s*"?([^"]*)"?\s*$/\1/' \
+    || true
+}
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+
+header
+
+SKIP_TF=false
+SKIP_ANSIBLE=false
+
+# ── 1. Check existing Terraform config ───────────────────────────────────────
+
+if [[ -f "$TFVARS" ]]; then
+  warn "Existing Terraform config found at terraform/terraform.tfvars"
+  echo
+  while IFS= read -r line; do
+    echo -e "  ${DIM}${line}${NC}"
+  done < "$TFVARS"
+
+  choose "What would you like to do?" \
+    "Keep existing Terraform config" \
+    "Modify Terraform config"
+
+  if [[ "$CHOICE" -eq 0 ]]; then
+    SKIP_TF=true
+  else
+    val=$(tfvar aws_region);       [[ -n "$val" ]] && D_REGION="$val"
+    val=$(tfvar my_ip);            [[ -n "$val" ]] && D_IP="$val"
+    val=$(tfvar public_key_path);  [[ -n "$val" ]] && D_KEY="$val"
+    val=$(tfvar instance_type);    [[ -n "$val" ]] && D_TYPE="$val"
+    val=$(tfvar root_volume_size); [[ -n "$val" ]] && D_SIZE="$val"
+  fi
+fi
+
+# ── 2. Check existing Ansible config ─────────────────────────────────────────
+
+if [[ -f "$ANSIBLE_VARS" ]]; then
+  warn "Existing Ansible config found at ansible/vars.yml"
+  echo
+  while IFS= read -r line; do
+    echo -e "  ${DIM}${line}${NC}"
+  done < "$ANSIBLE_VARS"
+
+  choose "What would you like to do?" \
+    "Keep existing Ansible config" \
+    "Modify Ansible config"
+
+  if [[ "$CHOICE" -eq 0 ]]; then
+    SKIP_ANSIBLE=true
+  else
+    val=$(ansiblevar git_user_name);  [[ -n "$val" ]] && D_GIT_NAME="$val"
+    val=$(ansiblevar git_user_email); [[ -n "$val" ]] && D_GIT_EMAIL="$val"
+  fi
+fi
+
+# ── Exit early if nothing to configure ───────────────────────────────────────
+
+if [[ "$SKIP_TF" == true && "$SKIP_ANSIBLE" == true ]]; then
+  echo
+  ok "All configs up to date."
+  echo
+  info "Run:  cd terraform && terraform init   # first time only"
+  info "      terraform apply"
+  info "      ansible-playbook -i \"\$(terraform output -raw instance_public_ip),\" ../ansible/playbook.yml"
+  echo
+  exit 0
+fi
+
+# ── 3. Detect public IP (if configuring Terraform) ───────────────────────────
+
+if [[ "$SKIP_TF" == false ]]; then
+  step "Detecting your public IP..."
+  if FETCHED=$(curl -sf --max-time 5 ifconfig.me 2>/dev/null); then
+    D_IP="${FETCHED}/32"
+    ok "Detected: ${D_IP}"
+  else
+    warn "Could not reach ifconfig.me — you'll need to enter your IP manually."
+  fi
+fi
+
+# ── 4. Prompts ────────────────────────────────────────────────────────────────
+
+if [[ "$SKIP_TF" == false ]]; then
+  step "Configure Terraform"
+  ask "AWS region"             "$D_REGION"; REGION="$ANSWER"
+  ask "Your IP (CIDR)"         "$D_IP";     MY_IP="$ANSWER"
+  ask "SSH public key path"    "$D_KEY";    KEY="$ANSWER"
+  ask "Instance type"          "$D_TYPE";   TYPE="$ANSWER"
+  ask "Root volume size (GB)"  "$D_SIZE";   SIZE="$ANSWER"
+fi
+
+if [[ "$SKIP_ANSIBLE" == false ]]; then
+  step "Configure Ansible"
+  ask "Git user name"   "$D_GIT_NAME";  GIT_NAME="$ANSWER"
+  ask "Git user email"  "$D_GIT_EMAIL"; GIT_EMAIL="$ANSWER"
+fi
+
+# ── 5. Review ─────────────────────────────────────────────────────────────────
+
+echo
+step "Review"
+echo
+
+if [[ "$SKIP_TF" == false ]]; then
+  printf "  ${DIM}%-20s${NC} %s\n" "aws_region"       "$REGION"
+  printf "  ${DIM}%-20s${NC} %s\n" "my_ip"            "$MY_IP"
+  printf "  ${DIM}%-20s${NC} %s\n" "public_key_path"  "$KEY"
+  printf "  ${DIM}%-20s${NC} %s\n" "instance_type"    "$TYPE"
+  printf "  ${DIM}%-20s${NC} %s\n" "root_volume_size" "$SIZE"
+  echo
+fi
+
+if [[ "$SKIP_ANSIBLE" == false ]]; then
+  printf "  ${DIM}%-20s${NC} %s\n" "git_user_name"  "$GIT_NAME"
+  printf "  ${DIM}%-20s${NC} %s\n" "git_user_email" "$GIT_EMAIL"
+  echo
+fi
+
+# ── 6. Confirm ────────────────────────────────────────────────────────────────
+
+echo -ne "  Write config files? ${DIM}[Y/n]${NC} › "
+read -r confirm || true
+if [[ "${confirm,,}" == "n" ]]; then
+  echo
+  warn "Aborted. No files written."
+  echo
+  exit 1
+fi
+
+# ── 7. Write ──────────────────────────────────────────────────────────────────
+
+echo
+
+if [[ "$SKIP_TF" == false ]]; then
+  cat > "$TFVARS" <<EOF
+aws_region       = "$REGION"
+my_ip            = "$MY_IP"
+public_key_path  = "$KEY"
+instance_type    = "$TYPE"
+root_volume_size = $SIZE
+EOF
+  ok "Written to terraform/terraform.tfvars"
+fi
+
+if [[ "$SKIP_ANSIBLE" == false ]]; then
+  cat > "$ANSIBLE_VARS" <<EOF
+git_user_name: "$GIT_NAME"
+git_user_email: "$GIT_EMAIL"
+EOF
+  ok "Written to ansible/vars.yml"
+fi
+
+echo
+info "Next steps:"
+info "  cd terraform && terraform init   # first time only"
+info "  terraform apply"
+info "  ansible-playbook -i \"\$(terraform output -raw instance_public_ip),\" ../ansible/playbook.yml"
+echo
