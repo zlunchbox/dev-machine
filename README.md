@@ -84,4 +84,5 @@ Both config files are gitignored. Use the `.example` files as reference.
 ## Credits
 
 Imagined by Zachary Luettgen
+
 Built by Claude Sonnet 4.6
