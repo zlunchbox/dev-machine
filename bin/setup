@@ -12,8 +12,9 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TFVARS="$SCRIPT_DIR/terraform/terraform.tfvars"
-ANSIBLE_VARS="$SCRIPT_DIR/ansible/vars.yml"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TFVARS="$ROOT_DIR/terraform/terraform.tfvars"
+ANSIBLE_VARS="$ROOT_DIR/ansible/vars.yml"
 
 # ── UI helpers ───────────────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ choose() {
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 
-D_REGION="us-east-1"
+D_REGION="us-east-2"
 D_KEY="~/.ssh/dev-machine-key.pub"
 D_TYPE="t3.medium"
 D_SIZE="20"
@@ -149,8 +150,7 @@ if [[ "$SKIP_TF" == true && "$SKIP_ANSIBLE" == true ]]; then
   ok "All configs up to date."
   echo
   info "Run:  cd terraform && terraform init   # first time only"
-  info "      terraform apply"
-  info "      ansible-playbook -i \"\$(terraform output -raw instance_public_ip),\" ../ansible/playbook.yml"
+  info "      bin/provision"
   echo
   exit 0
 fi
@@ -242,6 +242,5 @@ fi
 echo
 info "Next steps:"
 info "  cd terraform && terraform init   # first time only"
-info "  terraform apply"
-info "  ansible-playbook -i \"\$(terraform output -raw instance_public_ip),\" ../ansible/playbook.yml"
+info "  bin/provision"
 echo

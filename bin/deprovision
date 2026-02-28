@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Formatting ───────────────────────────────────────────────────────────────
+
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+step() { echo -e "\n  ${BOLD}${CYAN}$*${NC}"; }
+ok()   { echo -e "  ${GREEN}✓${NC}  $*"; }
+
+# ── Terraform ─────────────────────────────────────────────────────────────────
+
+step "Destroying infrastructure..."
+cd "$ROOT_DIR/terraform"
+terraform destroy
+
+echo
+ok "Done."
+echo
