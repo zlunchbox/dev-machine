@@ -209,7 +209,7 @@ fi
 
 echo -ne "  Write config files? ${DIM}[Y/n]${NC} › "
 read -r confirm || true
-if [[ "${confirm,,}" == "n" ]]; then
+if [[ "$(echo "$confirm" | tr '[:upper:]' '[:lower:]')" == "n" ]]; then
   echo
   warn "Aborted. No files written."
   echo
