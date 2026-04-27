@@ -70,7 +70,6 @@ D_REGION="us-east-2"
 D_KEY="~/.ssh/dev-machine-key.pub"
 D_TYPE="t3.medium"
 D_SIZE="20"
-D_IP=""
 D_GIT_NAME=""
 D_GIT_EMAIL=""
 
@@ -115,7 +114,6 @@ if [[ -f "$TFVARS" ]]; then
     SKIP_TF=true
   else
     val=$(tfvar aws_region);       [[ -n "$val" ]] && D_REGION="$val"
-    val=$(tfvar my_ip);            [[ -n "$val" ]] && D_IP="$val"
     val=$(tfvar public_key_path);  [[ -n "$val" ]] && D_KEY="$val"
     val=$(tfvar instance_type);    [[ -n "$val" ]] && D_TYPE="$val"
     val=$(tfvar root_volume_size); [[ -n "$val" ]] && D_SIZE="$val"
@@ -155,24 +153,11 @@ if [[ "$SKIP_TF" == true && "$SKIP_ANSIBLE" == true ]]; then
   exit 0
 fi
 
-# ── 3. Detect public IP (if configuring Terraform) ───────────────────────────
-
-if [[ "$SKIP_TF" == false ]]; then
-  step "Detecting your public IP..."
-  if FETCHED=$(curl -sf --max-time 5 ifconfig.me 2>/dev/null); then
-    D_IP="${FETCHED}/32"
-    ok "Detected: ${D_IP}"
-  else
-    warn "Could not reach ifconfig.me — you'll need to enter your IP manually."
-  fi
-fi
-
-# ── 4. Prompts ────────────────────────────────────────────────────────────────
+# ── 3. Prompts ────────────────────────────────────────────────────────────────
 
 if [[ "$SKIP_TF" == false ]]; then
   step "Configure Terraform"
   ask "AWS region"             "$D_REGION"; REGION="$ANSWER"
-  ask "Your IP (CIDR)"         "$D_IP";     MY_IP="$ANSWER"
   ask "SSH public key path"    "$D_KEY";    KEY="$ANSWER"
   ask "Instance type"          "$D_TYPE";   TYPE="$ANSWER"
   ask "Root volume size (GB)"  "$D_SIZE";   SIZE="$ANSWER"
@@ -184,7 +169,7 @@ if [[ "$SKIP_ANSIBLE" == false ]]; then
   ask "Git user email"  "$D_GIT_EMAIL"; GIT_EMAIL="$ANSWER"
 fi
 
-# ── 5. Review ─────────────────────────────────────────────────────────────────
+# ── 4. Review ─────────────────────────────────────────────────────────────────
 
 echo
 step "Review"
@@ -192,7 +177,6 @@ echo
 
 if [[ "$SKIP_TF" == false ]]; then
   printf "  ${DIM}%-20s${NC} %s\n" "aws_region"       "$REGION"
-  printf "  ${DIM}%-20s${NC} %s\n" "my_ip"            "$MY_IP"
   printf "  ${DIM}%-20s${NC} %s\n" "public_key_path"  "$KEY"
   printf "  ${DIM}%-20s${NC} %s\n" "instance_type"    "$TYPE"
   printf "  ${DIM}%-20s${NC} %s\n" "root_volume_size" "$SIZE"
@@ -205,7 +189,7 @@ if [[ "$SKIP_ANSIBLE" == false ]]; then
   echo
 fi
 
-# ── 6. Confirm ────────────────────────────────────────────────────────────────
+# ── 5. Confirm ────────────────────────────────────────────────────────────────
 
 echo -ne "  Write config files? ${DIM}[Y/n]${NC} › "
 read -r confirm || true
@@ -216,14 +200,13 @@ if [[ "$(echo "$confirm" | tr '[:upper:]' '[:lower:]')" == "n" ]]; then
   exit 1
 fi
 
-# ── 7. Write ──────────────────────────────────────────────────────────────────
+# ── 6. Write ──────────────────────────────────────────────────────────────────
 
 echo
 
 if [[ "$SKIP_TF" == false ]]; then
   cat > "$TFVARS" <<EOF
 aws_region       = "$REGION"
-my_ip            = "$MY_IP"
 public_key_path  = "$KEY"
 instance_type    = "$TYPE"
 root_volume_size = $SIZE

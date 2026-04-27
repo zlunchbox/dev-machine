@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    http = {
+      source  = "hashicorp/http"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -28,6 +32,10 @@ data "aws_ami" "ubuntu" {
   }
 }
 
+data "http" "my_ip" {
+  url = "https://ifconfig.me"
+}
+
 resource "aws_key_pair" "dev_machine" {
   key_name   = "dev-machine-key"
   public_key = file(pathexpand(var.public_key_path))
@@ -42,7 +50,7 @@ resource "aws_security_group" "dev_machine" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = [var.my_ip]
+    cidr_blocks = ["${chomp(data.http.my_ip.response_body)}/32"]
   }
 
   egress {

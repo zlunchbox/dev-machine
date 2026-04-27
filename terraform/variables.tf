@@ -21,8 +21,3 @@ variable "public_key_path" {
   type        = string
   default     = "~/.ssh/dev-machine-key.pub"
 }
-
-variable "my_ip" {
-  description = "Your public IP in CIDR notation (e.g. 1.2.3.4/32) — restricts SSH access to this IP only"
-  type        = string
-}
