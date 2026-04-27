@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Formatting ───────────────────────────────────────────────────────────────
+
+BOLD='\033[1m'
+DIM='\033[2m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+step() { echo -e "\n  ${BOLD}${CYAN}$*${NC}"; }
+ok()   { echo -e "  ${GREEN}✓${NC}  $*"; }
+
+# ── Read Terraform outputs ───────────────────────────────────────────────────
+
+cd "$ROOT_DIR/terraform"
+
+INSTANCE_ID="$(terraform output -raw instance_id 2>/dev/null)" || {
+  echo -e "\n  ${RED}No instance found.${NC} Run ${DIM}bin/provision${NC} first.\n"
+  exit 1
+}
+
+IP="$(terraform output -raw instance_public_ip 2>/dev/null)" || true
+REGION="$(terraform output -raw aws_region 2>/dev/null)" || true
+
+# ── Query AWS ────────────────────────────────────────────────────────────────
+
+step "Fetching instance status..."
+
+INSTANCE_JSON="$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" \
+  --region "$REGION" \
+  --profile playground \
+  --output json 2>/dev/null)" || {
+  echo -e "\n  ${RED}Failed to query AWS.${NC} Is the instance still alive?\n"
+  exit 1
+}
+
+# ── Parse response ───────────────────────────────────────────────────────────
+
+STATE="$(echo "$INSTANCE_JSON" | jq -r '.Reservations[0].Instances[0].State.Name')"
+INSTANCE_TYPE="$(echo "$INSTANCE_JSON" | jq -r '.Reservations[0].Instances[0].InstanceType')"
+PUBLIC_IP="$(echo "$INSTANCE_JSON" | jq -r '.Reservations[0].Instances[0].PublicIpAddress // "—"')"
+AZ="$(echo "$INSTANCE_JSON" | jq -r '.Reservations[0].Instances[0].Placement.AvailabilityZone')"
+LAUNCH_TIME="$(echo "$INSTANCE_JSON" | jq -r '.Reservations[0].Instances[0].LaunchTime')"
+
+# ── Uptime ───────────────────────────────────────────────────────────────────
+
+UPTIME_STR="—"
+COST_STR="—"
+
+if [[ "$STATE" == "running" && "$LAUNCH_TIME" != "null" ]]; then
+  NOW_EPOCH="$(date +%s)"
+  LAUNCH_EPOCH="$(date -j -f "%Y-%m-%dT%H:%M:%S" "${LAUNCH_TIME%%+*}" +%s 2>/dev/null)" || \
+    LAUNCH_EPOCH="$(date -d "$LAUNCH_TIME" +%s 2>/dev/null)" || LAUNCH_EPOCH="$NOW_EPOCH"
+
+  DIFF_SECS=$(( NOW_EPOCH - LAUNCH_EPOCH ))
+  HOURS=$(( DIFF_SECS / 3600 ))
+  MINS=$(( (DIFF_SECS % 3600) / 60 ))
+  UPTIME_STR="${HOURS}h ${MINS}m"
+
+  # ── Cost estimate (on-demand hourly rates, us-east / us-west) ────────────
+  declare -A RATES=(
+    ["t3.micro"]="0.0104"
+    ["t3.small"]="0.0208"
+    ["t3.medium"]="0.0416"
+    ["t3.large"]="0.0832"
+  )
+
+  RATE="${RATES[$INSTANCE_TYPE]:-}"
+  if [[ -n "$RATE" ]]; then
+    UPTIME_HOURS="$(echo "scale=4; $DIFF_SECS / 3600" | bc)"
+    TOTAL="$(echo "scale=2; $UPTIME_HOURS * $RATE" | bc)"
+    COST_STR="~\$${TOTAL} (\$${RATE}/hr)"
+  else
+    COST_STR="unknown type"
+  fi
+fi
+
+# ── Color the state ──────────────────────────────────────────────────────────
+
+case "$STATE" in
+  running)    STATE_COLOR="${GREEN}" ;;
+  stopped)    STATE_COLOR="${YELLOW}" ;;
+  *)          STATE_COLOR="${RED}" ;;
+esac
+
+# ── Display ──────────────────────────────────────────────────────────────────
+
+echo -e "
+  ${BOLD}Instance:${NC}  ${INSTANCE_ID}  (${STATE_COLOR}${STATE}${NC})
+  ${BOLD}Type:${NC}      ${INSTANCE_TYPE}
+  ${BOLD}IP:${NC}        ${PUBLIC_IP}
+  ${BOLD}Zone:${NC}      ${AZ}
+  ${BOLD}Uptime:${NC}    ${UPTIME_STR}
+  ${BOLD}Cost:${NC}      ${COST_STR}
+"

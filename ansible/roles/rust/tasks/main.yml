@@ -1,0 +1,6 @@
+---
+- name: Install Rust toolchain
+  ansible.builtin.shell:
+    cmd: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    creates: /home/ubuntu/.cargo/bin/rustc
+  become: false

@@ -15,3 +15,5 @@
   roles:
     - common
     - deno
+    - rust
+    - tauri

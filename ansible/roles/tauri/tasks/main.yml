@@ -1,0 +1,13 @@
+---
+- name: Install Tauri development dependencies
+  ansible.builtin.apt:
+    name:
+      - wget
+      - file
+      - pkg-config
+      - libssl-dev
+      - libwebkit2gtk-4.1-dev
+      - libxdo-dev
+      - libayatana-appindicator3-dev
+      - librsvg2-dev
+    state: present
